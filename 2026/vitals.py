@@ -208,3 +208,17 @@ def fluctuate_vitals(patient_name):
         snapshot["BP"] = (f"{bp_s}/{bp_d}", "", is_abnormal)
 
     return snapshot
+
+
+def get_vitals(patient_name):
+    """Return a simple {label: value_string} dict for the server .vitals command."""
+    snapshot = fluctuate_vitals(patient_name)
+    if not snapshot:
+        return None
+    result = {}
+    for key, (val, unit, is_abnormal) in snapshot.items():
+        tag = ""
+        if is_abnormal:
+            tag = " (abnormal)"
+        result[key] = f"{val} {unit}{tag}".strip()
+    return result
