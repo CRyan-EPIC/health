@@ -6,51 +6,36 @@ import os
 import json
 import re
 import select
+import threading
 
 from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
-from rich.columns import Columns
 from rich import box
 
-from vitals import format_vitals_ascii, get_vitals
+from vitals import fluctuate_vitals, PATIENT_VITALS, BEAT_PATTERN, BEAT_LEN
 
 SERVER_IP = '10.171.132.99'
 #SERVER_IP = '10.171.159.254'
 SERVER_PORT = 65432
 SOCKET_TIMEOUT = 30
 RECONNECT_DELAY = 3
-IDLE_TIMEOUT = 60  # seconds of no input before auto-restart
-MAX_PROMPT_LENGTH = 256  # bytes
+IDLE_TIMEOUT = 60
+MAX_PROMPT_LENGTH = 256
 
 console = Console()
 
 patients = [
-    [1, "Julian"],
-    [2, "Emily"],
-    [3, "Sophia"],
-    [4, "Camila"],
-    [5, "Connor"],
-    [6, "Ben"],
-    [7, "Aidan"],
-    [8, "Emma"],
-    [9, "Lizzy"],
-    [10, "Michaela"],
-    [11, "Ian"],
-    [12, "Samira"],
-    [13, "Ethan"],
-    [14, "Jackson"],
-    [15, "Cynthia"],
-    [16, "Olivia"],
-    [17, "Leo"],
-    [18, "Zoe"],
-    [19, "Tyler"],
-    [20, "Riley"],
-    [21, "Mason"],
+    [1, "Julian"],   [2, "Emily"],    [3, "Sophia"],
+    [4, "Camila"],   [5, "Connor"],   [6, "Ben"],
+    [7, "Aidan"],    [8, "Emma"],     [9, "Lizzy"],
+    [10, "Michaela"],[11, "Ian"],     [12, "Samira"],
+    [13, "Ethan"],   [14, "Jackson"], [15, "Cynthia"],
+    [16, "Olivia"],  [17, "Leo"],     [18, "Zoe"],
+    [19, "Tyler"],   [20, "Riley"],   [21, "Mason"],
 ]
 
-# SAMPLE assessment state
 SAMPLE_LABELS = {
     "S": "Signs & Symptoms",
     "A": "Allergies",
@@ -60,201 +45,262 @@ SAMPLE_LABELS = {
     "E": "Events Leading Up",
 }
 
-# Session state
+# ─── ANSI codes ────────────────────────────────────────────────────
+
+RST  = "\033[0m"
+BOLD = "\033[1m"
+DIM  = "\033[2m"
+RED  = "\033[31m"
+GRN  = "\033[32m"
+YEL  = "\033[33m"
+CYN  = "\033[36m"
+WHT  = "\033[37m"
+BRED = "\033[1;31m"
+BGRN = "\033[1;32m"
+BCYN = "\033[1;36m"
+BWHT = "\033[1;37m"
+DGRN = "\033[2;32m"
+DWHT = "\033[2;37m"
+
+# ─── Session state ─────────────────────────────────────────────────
+
 sample_covered = set()
 start_time = None
-conversation_log = []  # list of (role, text) tuples
-ecg_offset = 0  # animation offset for ECG waveform
-
+conversation_log = []
 last_activity = time.time()
 
 
-# ─── Display helpers ───────────────────────────────────────────────
+# ─── Vitals Animator ───────────────────────────────────────────────
 
-def clear_screen():
-    os.system('cls' if os.name == 'nt' else 'clear')
+class VitalsAnimator:
+    """Live-updating vitals monitor rendered at fixed screen rows via ANSI."""
+
+    REFRESH_INTERVAL = 0.25       # 250ms between display refreshes
+    FLUCTUATE_INTERVAL = 8.0      # seconds between vital number changes
+
+    def __init__(self, patient_name, start_row):
+        self.patient_name = patient_name
+        self.start_row = start_row
+        self.running = False
+        self._thread = None
+        self._birth = time.time()
+        self._vitals = fluctuate_vitals(patient_name)
+        self._last_fluctuate = time.time()
+
+    def start(self):
+        self.running = True
+        self._thread = threading.Thread(target=self._loop, daemon=True)
+        self._thread.start()
+
+    def stop(self):
+        self.running = False
+
+    def _loop(self):
+        while self.running:
+            try:
+                self._render()
+            except Exception:
+                pass
+            time.sleep(self.REFRESH_INTERVAL)
+
+    def _render(self):
+        now = time.time()
+        tw = os.get_terminal_size().columns
+
+        # Fluctuate vitals on schedule
+        if now - self._last_fluctuate >= self.FLUCTUATE_INTERVAL:
+            self._vitals = fluctuate_vitals(self.patient_name)
+            self._last_fluctuate = now
+
+        vitals = self._vitals
+        hr_val = vitals.get("HR", (72, "bpm", False))[0]
+
+        # ── ECG waveform ──────────────────────────────
+        # Scroll speed tied to heart rate:
+        #   beats_per_sec * chars_per_beat = chars_per_sec
+        elapsed = now - self._birth
+        beats_per_sec = hr_val / 60.0
+        chars_per_sec = beats_per_sec * BEAT_LEN
+        offset = int(elapsed * chars_per_sec)
+
+        ecg_width = tw - 6
+        ecg_colored = ""
+        for i in range(ecg_width):
+            ch = BEAT_PATTERN[(offset + i) % BEAT_LEN]
+            if ch == "─":
+                ecg_colored += f"{DGRN}{ch}"
+            else:
+                ecg_colored += f"{BGRN}{ch}"
+        ecg_colored += RST
+
+        # ── Vital values line ─────────────────────────
+        parts = []
+
+        hr_v, hr_u, hr_ab = vitals.get("HR", (72, "bpm", False))
+        c = BRED if hr_ab else BGRN
+        parts.append(f"{BRED}\u2665{RST} {DWHT}HR:{RST} {c}{hr_v} {hr_u}{RST}")
+
+        t_v, t_u, t_ab = vitals.get("Temp", (98.6, "F", False))
+        c = BRED if t_ab else WHT
+        parts.append(f"{DWHT}Temp:{RST} {c}{t_v}{RST}")
+
+        bp_v, _, bp_ab = vitals.get("BP", ("--/--", "", False))
+        c = BRED if bp_ab else WHT
+        parts.append(f"{DWHT}BP:{RST} {c}{bp_v}{RST}")
+
+        o_v, o_u, o_ab = vitals.get("SpO2", (99, "%", False))
+        c = BRED if o_ab else BCYN
+        parts.append(f"{DWHT}SpO2:{RST} {c}{o_v}{o_u}{RST}")
+
+        r_v, r_u, r_ab = vitals.get("Resp", (16, "/min", False))
+        c = BRED if r_ab else WHT
+        parts.append(f"{DWHT}Resp:{RST} {c}{r_v}{r_u}{RST}")
+
+        vals_line = "   ".join(parts)
+
+        # ── Compose 4-line display ────────────────────
+        iw = tw - 2
+        title = " Vitals Monitor "
+        dashes_after = max(0, iw - len(title) - 1)
+        line0 = f"{DGRN}\u256d\u2500{BGRN}{title}{DGRN}" + "\u2500" * dashes_after + f"\u256e{RST}"
+        line1 = f"{DGRN}\u2502{RST} {ecg_colored} {DGRN}\u2502{RST}"
+        line2 = f"{DGRN}\u2502{RST} {vals_line}"
+        line3 = f"{DGRN}\u2570" + "\u2500" * iw + f"\u256f{RST}"
+
+        # ── Write to screen with cursor save/restore ──
+        buf = "\033[s"  # save cursor
+        for i, line in enumerate([line0, line1, line2, line3]):
+            row = self.start_row + i
+            buf += f"\033[{row};1H\033[2K{line}"
+        buf += "\033[u"  # restore cursor
+        sys.stdout.write(buf)
+        sys.stdout.flush()
 
 
-def print_banner():
-    """Print the MedSim AI welcome banner."""
-    banner = Text()
-    banner.append("  +  ", style="bold red")
-    banner.append("MedSim AI", style="bold cyan")
-    banner.append("  +  ", style="bold red")
-    banner.append("  CNA Training Simulator", style="dim white")
-    console.print(Panel(banner, border_style="cyan", box=box.DOUBLE))
+# ─── Screen layout ─────────────────────────────────────────────────
+# Row 1:    Header line
+# Row 2:    Separator
+# Row 3:    (blank)
+# Row 4-7:  Vitals monitor (animated by VitalsAnimator)
+# Row 8:    (blank)
+# Row 9:    SAMPLE compact line
+# Row 10:   Separator
+# Rows 11+: Conversation, help, input prompt
+
+VITALS_START_ROW = 4
+STATIC_START_ROW = 8
 
 
-def print_header(patient_name):
-    """Print the patient header with timer."""
+def draw_header(patient_name):
+    """Draw the 2-line header at rows 1-2."""
+    tw = os.get_terminal_size().columns
     elapsed = ""
     if start_time:
         secs = int(time.time() - start_time)
         mins, s = divmod(secs, 60)
         elapsed = f"{mins}:{s:02d}"
 
-    header = Table.grid(padding=(0, 3))
-    header.add_column(justify="left", min_width=30)
-    header.add_column(justify="right", min_width=20)
-    header.add_row(
-        Text.assemble(
-            ("  +  ", "bold red"),
-            ("Patient: ", "dim white"),
-            (patient_name, "bold cyan"),
-        ),
-        Text.assemble(
-            ("Time: ", "dim white"),
-            (elapsed, "bold white"),
-        ),
-    )
-    console.print(Panel(header, border_style="cyan", title="[bold cyan]MedSim AI[/]", title_align="left", box=box.ROUNDED))
+    left = f"  {BRED}+{RST}  {BCYN}MedSim AI{RST}  {BRED}+{RST}  {DWHT}Patient:{RST} {BCYN}{patient_name}{RST}"
+    right = f"{DWHT}Time:{RST} {BWHT}{elapsed}{RST}"
+
+    sys.stdout.write(f"\033[1;1H\033[2K{left}    {right}\n")
+    sys.stdout.write(f"\033[2K{DGRN}" + "\u2500" * tw + f"{RST}\n")
+    sys.stdout.flush()
 
 
-def print_sample_checklist():
-    """Print the SAMPLE assessment checklist."""
-    table = Table(
-        title="[bold white]SAMPLE Assessment[/]",
-        box=box.SIMPLE,
-        show_header=False,
-        title_style="bold white",
-        padding=(0, 1),
-    )
-    table.add_column("Check", width=3)
-    table.add_column("Category", min_width=20)
-
-    for letter, label in SAMPLE_LABELS.items():
+def draw_sample_line():
+    """Draw a compact 1-line SAMPLE checklist."""
+    parts = []
+    for letter in SAMPLE_LABELS:
         if letter in sample_covered:
-            check = "[bold green][x][/]"
-            style = "green"
+            parts.append(f"{BGRN}[\u2713]{letter}{RST}")
         else:
-            check = "[dim][ ][/]"
-            style = "dim white"
-        table.add_row(check, f"[{style}]{letter} - {label}[/]")
+            parts.append(f"{DIM}[ ]{letter}{RST}")
+    count = len(sample_covered)
+    total = len(SAMPLE_LABELS)
+    line = f"  {BWHT}SAMPLE:{RST} {'  '.join(parts)}   {DWHT}({count}/{total}){RST}"
+    return line
 
-    return table
 
+def draw_static_area(patient_name):
+    """Draw everything below the vitals monitor (SAMPLE, conversation, help, prompt)."""
+    tw = os.get_terminal_size().columns
+    th = os.get_terminal_size().lines
+    row = STATIC_START_ROW
 
-def build_vitals_monitor(patient_name):
-    """Build the ASCII vital signs monitor panel with ECG waveform."""
-    global ecg_offset
-    ecg_offset += 1
+    # Row 8: blank
+    sys.stdout.write(f"\033[{row};1H\033[2K")
+    row += 1
 
-    data = format_vitals_ascii(patient_name, ecg_offset)
-    if isinstance(data, list):
-        return Panel("[dim]No vitals[/]", title="[bold white]Vitals Monitor[/]", border_style="green")
+    # Row 9: SAMPLE
+    sys.stdout.write(f"\033[{row};1H\033[2K{draw_sample_line()}")
+    row += 1
 
-    text = Text()
+    # Row 10: separator
+    sys.stdout.write(f"\033[{row};1H\033[2K{DGRN}" + "\u2500" * tw + f"{RST}")
+    row += 1
 
-    # ECG waveform line
-    text.append("  ", style="green")
-    text.append(data["ecg_top"], style="bold green")
-    text.append("\n")
-    text.append("  ", style="green")
-    text.append(data["ecg_mid"], style="bold green")
-    text.append("\n")
-    text.append("  ", style="green")
-    text.append(data["ecg_bot"], style="bold green")
-    text.append("\n\n")
+    # Rows 11+: Conversation
+    max_conv_lines = max(4, th - row - 4)  # leave room for help + input
+    recent = conversation_log[-(max_conv_lines):]
 
-    # Vital sign readings
-    vitals_order = [
-        ("HR",   "hr",   "bold green"),
-        ("Temp", "temp", "bold white"),
-        ("BP",   "bp",   "bold white"),
-        ("SpO2", "spo2", "bold cyan"),
-        ("Resp", "resp", "bold white"),
-    ]
-
-    for label, key, normal_style in vitals_order:
-        val, unit, is_abnormal = data[key]
-        style = "bold red" if is_abnormal else normal_style
-        if label == "HR":
-            text.append("  ♥ ", style="bold red")
+    for msg_role, msg_text in recent:
+        if row >= th - 3:
+            break
+        if msg_role == "doctor":
+            line = f"  {BGRN}Doctor:{RST} {msg_text}"
+        elif msg_role == "patient":
+            line = f"  {BCYN}{patient_name}:{RST} {msg_text}"
         else:
-            text.append("    ", style="dim")
-        text.append(f"{label}: ", style="dim white")
-        text.append(f"{val} {unit}", style=style)
-        if is_abnormal:
-            text.append(" !", style="bold red")
-        text.append("\n")
+            line = f"  {DIM}{YEL}{msg_text}{RST}"
+        # Truncate to terminal width
+        # Strip ANSI for length check
+        visible = re.sub(r'\033\[[0-9;]*m', '', line)
+        if len(visible) > tw - 1:
+            # Rough truncation (may cut mid-ANSI, but safer than overflow)
+            line = line[:tw + 60] + RST
+        sys.stdout.write(f"\033[{row};1H\033[2K{line}")
+        row += 1
 
-    return text
-
-
-def print_sidebar(patient_name):
-    """Print SAMPLE checklist and vitals monitor side by side."""
-    sample_table = print_sample_checklist()
-    vitals_text = build_vitals_monitor(patient_name)
-    vitals_panel = Panel(
-        vitals_text,
-        title="[bold green]Vitals Monitor[/]",
-        border_style="green",
-        box=box.ROUNDED,
-        width=38,
-    )
-    console.print(Columns([sample_table, vitals_panel], padding=(0, 2)))
-
-
-def print_help_bar():
-    """Print the command help bar at the bottom."""
-    help_text = Text()
-    commands = [
-        (".reset", "Reset mood"),
-    ]
-    for i, (cmd, desc) in enumerate(commands):
-        if i > 0:
-            help_text.append("  |  ", style="dim")
-        help_text.append(cmd, style="bold cyan")
-        help_text.append(f" {desc}", style="dim white")
-    console.print(Panel(help_text, border_style="dim", box=box.ROUNDED))
-
-
-def print_conversation_tail(patient_name, n=6):
-    """Print the last n conversation exchanges."""
-    recent = conversation_log[-n:]
     if not recent:
-        console.print(Panel(
-            "[dim italic]Start by asking the patient a question...[/]",
-            title="[bold white]Conversation[/]",
-            border_style="dim cyan",
-            box=box.ROUNDED,
-        ))
-        return
+        sys.stdout.write(f"\033[{row};1H\033[2K  {DIM}Start by asking the patient a question...{RST}")
+        row += 1
 
-    text = Text()
-    for role, msg in recent:
-        if role == "doctor":
-            text.append("Doctor: ", style="bold green")
-            text.append(msg + "\n", style="white")
-        elif role == "patient":
-            text.append(f"{patient_name}: ", style="bold cyan")
-            text.append(msg + "\n", style="white")
-        elif role == "system":
-            text.append(msg + "\n", style="dim yellow")
-    console.print(Panel(
-        text,
-        title="[bold white]Conversation[/]",
-        border_style="dim cyan",
-        box=box.ROUNDED,
-    ))
+    # Clear any leftover lines from previous longer conversations
+    while row < th - 3:
+        sys.stdout.write(f"\033[{row};1H\033[2K")
+        row += 1
+
+    # Separator
+    sys.stdout.write(f"\033[{row};1H\033[2K{DGRN}" + "\u2500" * tw + f"{RST}")
+    row += 1
+
+    # Help line
+    sys.stdout.write(f"\033[{row};1H\033[2K  {BCYN}.reset{RST} {DWHT}Reset mood{RST}")
+    row += 1
+
+    # Blank + prompt position
+    sys.stdout.write(f"\033[{row};1H\033[2K")
+
+    sys.stdout.flush()
 
 
 def redraw_screen(patient_name):
-    """Redraw the full TUI screen."""
-    clear_screen()
-    print_header(patient_name)
-    console.print()
-    print_sidebar(patient_name)
-    console.print()
-    print_conversation_tail(patient_name)
-    console.print()
-    print_help_bar()
+    """Full screen redraw (header + vitals placeholder + static area)."""
+    sys.stdout.write("\033[2J\033[H")  # clear screen, cursor home
+    draw_header(patient_name)
+    # Row 3: blank
+    sys.stdout.write("\033[3;1H\033[2K\n")
+    # Rows 4-7: leave blank for VitalsAnimator
+    for r in range(VITALS_START_ROW, VITALS_START_ROW + 4):
+        sys.stdout.write(f"\033[{r};1H\033[2K\n")
+    draw_static_area(patient_name)
+    sys.stdout.flush()
 
 
 # ─── Networking ────────────────────────────────────────────────────
 
 def stream_response(sock):
-    """Yield text tokens from the server, handle special tags."""
     buffer = bytearray()
     while True:
         try:
@@ -265,35 +311,25 @@ def stream_response(sock):
             while True:
                 try:
                     decoded = buffer.decode('utf-8')
-
-                    # Check for end of response
                     if "<<END_OF_RESPONSE>>" in decoded:
                         idx = decoded.index("<<END_OF_RESPONSE>>")
                         to_yield = decoded[:idx]
                         remainder = decoded[idx + len("<<END_OF_RESPONSE>>"):]
-
                         if to_yield:
                             yield ("text", to_yield)
-
-                        # Check remainder for special tags
                         parse_special_tags(remainder)
                         return
-
-                    # Check for special tags within the stream
                     tag_start = decoded.find("<<")
                     if tag_start > 0:
                         yield ("text", decoded[:tag_start])
                         buffer = bytearray(decoded[tag_start:].encode('utf-8'))
                     elif tag_start == 0 and ">>" in decoded:
                         tag_end = decoded.index(">>") + 2
-                        tag = decoded[:tag_end]
-                        parse_special_tags(tag)
+                        parse_special_tags(decoded[:tag_end])
                         buffer = bytearray(decoded[tag_end:].encode('utf-8'))
                     elif tag_start == -1 and decoded:
                         yield ("text", decoded)
                         buffer.clear()
-                    else:
-                        pass
                     break
                 except UnicodeDecodeError as e:
                     valid_up_to = e.start
@@ -309,12 +345,10 @@ def stream_response(sock):
 
 
 def parse_special_tags(text):
-    """Parse special server tags like <<SAMPLE:SE>>."""
     global sample_covered
-
-    sample_match = re.search(r'<<SAMPLE:([A-Z]+)>>', text)
-    if sample_match:
-        for letter in sample_match.group(1):
+    m = re.search(r'<<SAMPLE:([A-Z]+)>>', text)
+    if m:
+        for letter in m.group(1):
             if letter in SAMPLE_LABELS:
                 sample_covered.add(letter)
 
@@ -322,16 +356,17 @@ def parse_special_tags(text):
 def connect_to_server(scenario):
     while True:
         try:
-            console.print(f"[dim]Connecting to server...[/]")
+            sys.stdout.write(f"  {DIM}Connecting to server...{RST}\n")
+            sys.stdout.flush()
             sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             sock.settimeout(SOCKET_TIMEOUT)
             sock.connect((SERVER_IP, SERVER_PORT))
             sock.sendall(str(scenario).encode('utf-8'))
             patient_name = sock.recv(1024).decode('utf-8', errors='replace').strip()
-            console.print(f"[green]Connected.[/] Patient: [bold cyan]{patient_name}[/]")
             return sock, patient_name
         except Exception as e:
-            console.print(f"[red]Connection failed ({e}), retrying in {RECONNECT_DELAY}s...[/]")
+            sys.stdout.write(f"  {BRED}Connection failed ({e}), retrying in {RECONNECT_DELAY}s...{RST}\n")
+            sys.stdout.flush()
             time.sleep(RECONNECT_DELAY)
 
 
@@ -342,16 +377,31 @@ def reconnect_and_resend(scenario, last_query):
             sock.sendall(last_query.encode('utf-8'))
             return sock, patient_name
         except Exception as e:
-            console.print(f"[red]Resend failed: {e}. Retrying...[/]")
+            sys.stdout.write(f"  {BRED}Resend failed: {e}. Retrying...{RST}\n")
+            sys.stdout.flush()
             sock.close()
             time.sleep(RECONNECT_DELAY)
 
 
-# ─── Scenario selection ────────────────────────────────────────────
+def timed_input(prompt, timeout):
+    sys.stdout.write(prompt)
+    sys.stdout.flush()
+    ready, _, _ = select.select([sys.stdin], [], [], timeout)
+    if ready:
+        return sys.stdin.readline().rstrip('\n')
+    return None
+
+
+# ─── Scenario selection (Rich for the one-time screen) ─────────────
 
 def choose_scenario():
-    clear_screen()
-    print_banner()
+    os.system('cls' if os.name == 'nt' else 'clear')
+    banner = Text()
+    banner.append("  +  ", style="bold red")
+    banner.append("MedSim AI", style="bold cyan")
+    banner.append("  +  ", style="bold red")
+    banner.append("  CNA Training Simulator", style="dim white")
+    console.print(Panel(banner, border_style="cyan", box=box.DOUBLE))
     console.print()
     console.print("[bold white]  Select a Patient[/]")
     console.print()
@@ -364,7 +414,6 @@ def choose_scenario():
     table.add_column("#", justify="right", style="bold cyan", width=3)
     table.add_column("Patient", min_width=12, style="white")
 
-    rows = []
     for i in range(0, len(patients), 3):
         row = []
         for j in range(3):
@@ -373,9 +422,6 @@ def choose_scenario():
                 row.extend([str(p[0]), p[1]])
             else:
                 row.extend(["", ""])
-        rows.append(row)
-
-    for row in rows:
         table.add_row(*row)
 
     console.print(table)
@@ -392,66 +438,67 @@ def choose_scenario():
             console.print("[red]Numbers only please.[/]")
 
 
-def timed_input(prompt_text, timeout):
-    """Read a line from stdin with a timeout. Returns the line or None on timeout."""
-    console.print(prompt_text, end="")
-    sys.stdout.flush()
-    ready, _, _ = select.select([sys.stdin], [], [], timeout)
-    if ready:
-        return sys.stdin.readline().rstrip('\n')
-    return None
-
-
-# ─── Reset session state ──────────────────────────────────────────
+# ─── Session management ───────────────────────────────────────────
 
 def reset_session():
-    """Reset all session state for a new patient."""
-    global sample_covered, start_time, conversation_log, ecg_offset
+    global sample_covered, start_time, conversation_log
     sample_covered = set()
     start_time = time.time()
     conversation_log = []
-    ecg_offset = 0
 
 
 # ─── Main ─────────────────────────────────────────────────────────
 
 def main():
-    global last_activity, start_time, session_active
+    global last_activity, start_time
 
-    clear_screen()
-    print_banner()
+    os.system('cls' if os.name == 'nt' else 'clear')
+    banner = Text()
+    banner.append("  +  ", style="bold red")
+    banner.append("MedSim AI", style="bold cyan")
+    banner.append("  +  ", style="bold red")
+    console.print(Panel(banner, border_style="cyan", box=box.DOUBLE))
     console.print()
     password = getpass.getpass("Enter password: ")
     if password != "":
-        console.print("[bold red]Incorrect password. Exiting.[/]")
+        console.print("[bold red]Incorrect password.[/]")
         sys.exit(1)
 
-    while True:  # Outer loop for auto-restart
+    while True:
         scenario = choose_scenario()
         reset_session()
         last_activity = time.time()
 
         sock, patient_name = connect_to_server(scenario)
+
+        # Draw initial screen and start vitals animation
         redraw_screen(patient_name)
+        animator = VitalsAnimator(patient_name, VITALS_START_ROW)
+        animator.start()
 
         last_query = None
         empty_input_count = 0
         EMPTY_INPUT_THRESHOLD = 3
         last_prompt_time = 0
-        PROMPT_COOLDOWN = 7  # seconds
+        PROMPT_COOLDOWN = 7
         should_restart = False
+
+        # Move cursor to input row
+        th = os.get_terminal_size().lines
+        input_row = th
+        prompt_str = f"\033[{input_row};1H\033[2K\n  {BGRN}Doctor > {RST}"
 
         while True:
             try:
-                # Calculate remaining time before idle restart
                 elapsed_idle = time.time() - last_activity
                 remaining = max(1, IDLE_TIMEOUT - elapsed_idle)
 
-                query = timed_input("\n[bold green]Doctor > [/]", timeout=remaining)
+                query = timed_input(prompt_str, timeout=remaining)
 
-                # Timed out — auto-restart
                 if query is None:
-                    console.print("\n[dim yellow]Session timed out. Returning to patient selection...[/]")
+                    animator.stop()
+                    sys.stdout.write(f"\n  {DIM}{YEL}Session timed out. Returning to patient selection...{RST}\n")
+                    sys.stdout.flush()
                     time.sleep(2)
                     should_restart = True
                     break
@@ -460,49 +507,56 @@ def main():
                 last_activity = time.time()
 
                 if len(query.encode('utf-8')) > MAX_PROMPT_LENGTH:
-                    console.print(f"[red]Prompt too long! Limit is {MAX_PROMPT_LENGTH} bytes.[/]")
+                    sys.stdout.write(f"  {BRED}Prompt too long! Max {MAX_PROMPT_LENGTH} bytes.{RST}\n")
+                    sys.stdout.flush()
                     continue
 
                 if query == '':
                     empty_input_count += 1
                     if empty_input_count >= EMPTY_INPUT_THRESHOLD:
-                        console.print("[dim yellow]Please type a question for the patient.[/]")
+                        sys.stdout.write(f"  {DIM}{YEL}Please type a question for the patient.{RST}\n")
+                        sys.stdout.flush()
                     continue
                 else:
                     empty_input_count = 0
 
                 if query.lower() == 'exit':
+                    animator.stop()
                     sock.close()
-                    console.print("[dim]Goodbye![/]")
+                    sys.stdout.write(f"  {DIM}Goodbye!{RST}\n")
+                    sys.stdout.flush()
                     return
 
-                # ── .switch command (hidden) ──
                 if query.lower() == '.switch':
+                    animator.stop()
                     sock.close()
                     should_restart = True
                     break
 
-                # ── .reset command ──
                 if query.lower() == '.reset':
-                    last_query = query
                     sock.sendall(query.encode('utf-8'))
                     response_text = ""
                     for tag_type, content in stream_response(sock):
                         if tag_type == "text":
                             response_text += content
                     conversation_log.append(("system", response_text.strip()))
+                    # Pause animator, redraw, resume
+                    animator.stop()
                     redraw_screen(patient_name)
+                    animator = VitalsAnimator(patient_name, VITALS_START_ROW)
+                    animator.start()
                     continue
 
-                # ── Rate limiting ──
+                # Rate limiting
                 current_time = time.time()
                 if current_time - last_prompt_time < PROMPT_COOLDOWN:
                     wait_time = PROMPT_COOLDOWN - (current_time - last_prompt_time)
-                    console.print(f"[dim yellow]Please wait {wait_time:.1f}s before your next question.[/]")
+                    sys.stdout.write(f"  {DIM}{YEL}Please wait {wait_time:.1f}s before your next question.{RST}\n")
+                    sys.stdout.flush()
                     continue
                 last_prompt_time = current_time
 
-                # ── Regular question ──
+                # Regular question
                 last_query = query
                 conversation_log.append(("doctor", query))
 
@@ -510,38 +564,45 @@ def main():
                     try:
                         sock.sendall(query.encode('utf-8'))
                         response_text = ""
-                        console.print(f"\n[bold cyan]{patient_name}:[/] ", end="")
+                        sys.stdout.write(f"\n  {BCYN}{patient_name}:{RST} ")
+                        sys.stdout.flush()
                         for tag_type, content in stream_response(sock):
                             if tag_type == "text":
-                                console.print(content, end="", highlight=False)
+                                sys.stdout.write(content)
+                                sys.stdout.flush()
                                 response_text += content
-                        console.print()
+                        sys.stdout.write("\n")
+                        sys.stdout.flush()
 
                         if response_text.strip():
                             conversation_log.append(("patient", response_text.strip()))
 
-                        # Show updated SAMPLE coverage after each question
                         if sample_covered:
-                            covered_str = ", ".join(
-                                SAMPLE_LABELS[l] for l in sorted(sample_covered)
-                            )
-                            console.print(f"[dim green]  SAMPLE: {len(sample_covered)}/6 covered ({covered_str})[/]")
+                            covered = ", ".join(SAMPLE_LABELS[l] for l in sorted(sample_covered))
+                            sys.stdout.write(f"  {DGRN}SAMPLE: {len(sample_covered)}/6 ({covered}){RST}\n")
+                            sys.stdout.flush()
 
-                        break  # Success
+                        break
                     except (TimeoutError, ConnectionError) as e:
-                        console.print(f"\n[red]Lost connection: {e}. Reconnecting...[/]")
+                        sys.stdout.write(f"\n  {BRED}Lost connection: {e}. Reconnecting...{RST}\n")
+                        sys.stdout.flush()
                         sock.close()
                         sock, patient_name = reconnect_and_resend(scenario, last_query)
-                        console.print("[green]Reconnected.[/]")
 
+                # After Q&A, redraw the static area to update conversation + SAMPLE
                 last_activity = time.time()
+                animator.stop()
+                redraw_screen(patient_name)
+                animator = VitalsAnimator(patient_name, VITALS_START_ROW)
+                animator.start()
 
             except KeyboardInterrupt:
-                console.print("\n[dim]Exiting.[/]")
+                animator.stop()
                 sock.close()
+                sys.stdout.write(f"\n  {DIM}Exiting.{RST}\n")
+                sys.stdout.flush()
                 return
 
-        # Clean up socket before restarting
         try:
             sock.close()
         except Exception:
