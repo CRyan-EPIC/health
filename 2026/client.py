@@ -61,6 +61,7 @@ BCYN = "\033[1;36m"
 BWHT = "\033[1;37m"
 DGRN = "\033[2;32m"
 DWHT = "\033[2;37m"
+DCYN = "\033[2;36m"
 
 # ─── Session state ─────────────────────────────────────────────────
 
@@ -89,6 +90,10 @@ class VitalsAnimator:
 
     def start(self):
         self.running = True
+        try:
+            self._render()
+        except Exception:
+            pass
         self._thread = threading.Thread(target=self._loop, daemon=True)
         self._thread.start()
 
@@ -105,7 +110,10 @@ class VitalsAnimator:
 
     def _render(self):
         now = time.time()
-        tw = os.get_terminal_size().columns
+        try:
+            tw = os.get_terminal_size().columns
+        except (ValueError, OSError):
+            tw = 80
 
         # Fluctuate vitals on schedule
         if now - self._last_fluctuate >= self.FLUCTUATE_INTERVAL:
@@ -113,23 +121,16 @@ class VitalsAnimator:
             self._last_fluctuate = now
 
         vitals = self._vitals
-        hr_val = vitals.get("HR", (72, "bpm", False))[0]
 
-        # ── ECG waveform ──────────────────────────────
-        elapsed = now - self._birth
-        beats_per_sec = hr_val / 60.0
-        chars_per_sec = beats_per_sec * BEAT_LEN
-        offset = int(elapsed * chars_per_sec)
+        # Timer
+        elapsed_str = ""
+        if start_time:
+            secs = int(now - start_time)
+            mins, s = divmod(secs, 60)
+            elapsed_str = f"{mins}:{s:02d}"
 
-        ecg_width = tw - 20  # leave room for HR number on the right
-        ecg_colored = ""
-        for i in range(ecg_width):
-            ch = BEAT_PATTERN[(offset + i) % BEAT_LEN]
-            if ch == "\u2500":
-                ecg_colored += f"{DGRN}{ch}"
-            else:
-                ecg_colored += f"{BGRN}{ch}"
-        ecg_colored += RST
+        # Box geometry: " │{content}│" → 1 margin + 1 border + content + 1 border
+        inner_w = tw - 3
 
         # ── Extract vitals ────────────────────────────
         hr_v, hr_u, hr_ab = vitals.get("HR", (72, "bpm", False))
@@ -144,29 +145,73 @@ class VitalsAnimator:
         oc  = BRED if o_ab else BCYN
         rc  = BRED if r_ab else WHT
 
-        # ── Compose 4-line display ────────────────────
-        # Line 0: ECG waveform + HR
-        # Line 1: Temp / BP / SpO2 / Resp
-        # Line 2: blank
-        # Line 3: separator
+        BC = DCYN  # border color
 
-        hr_display = f"  {BRED}\u2665{RST} {hrc}{hr_v}{RST} {DWHT}bpm{RST}"
+        # ── Row 0: Top border with title ──
+        title = " MedSim AI "
+        top_fill = inner_w - len(title) - 2
+        if top_fill < 0:
+            top_fill = 0
+        top = f" {BC}\u250c\u2500{BCYN}{title}{BC}{'\u2500' * top_fill}\u2500\u2510{RST}"
 
-        sep = f"{DGRN}" + "\u2500" * tw + f"{RST}"
+        # ── Row 1: Header (patient + timer) ──
+        h_left_vis = f"  Patient: {self.patient_name}"
+        h_left = f"  {DWHT}Patient:{RST} {BCYN}{self.patient_name}{RST}"
+        if elapsed_str:
+            h_right_vis = f"Time: {elapsed_str}  "
+            h_right = f"{DWHT}Time:{RST} {BWHT}{elapsed_str}{RST}  "
+        else:
+            h_right_vis = "  "
+            h_right = "  "
+        h_pad = inner_w - len(h_left_vis) - len(h_right_vis)
+        if h_pad < 0:
+            h_pad = 0
+        header = f" {BC}\u2502{RST}{h_left}{' ' * h_pad}{h_right}{BC}\u2502{RST}"
 
-        vals = (
-            f"    {DWHT}Temp:{RST} {tc}{t_v} {t_u}{RST}"
-            f"      {DWHT}BP:{RST} {bpc}{bp_v}{RST}"
-            f"      {DWHT}SpO2:{RST} {oc}{o_v}{o_u}{RST}"
-            f"      {DWHT}Resp:{RST} {rc}{r_v} {r_u}{RST}"
+        # ── Row 2: ECG waveform + HR ──
+        hr_vis = f"  \u2665 {hr_v} bpm  "
+        hr_colored = f"  {BRED}\u2665{RST} {hrc}{hr_v}{RST} {DWHT}bpm{RST}  "
+        ecg_width = inner_w - len(hr_vis) - 2  # 2 for left margin
+        if ecg_width < 10:
+            ecg_width = 10
+
+        elapsed_t = now - self._birth
+        beats_per_sec = hr_v / 60.0
+        chars_per_sec = beats_per_sec * BEAT_LEN
+        offset = int(elapsed_t * chars_per_sec)
+
+        ecg_str = ""
+        for i in range(ecg_width):
+            ch = BEAT_PATTERN[(offset + i) % BEAT_LEN]
+            if ch == "\u2500":
+                ecg_str += f"{DGRN}{ch}"
+            else:
+                ecg_str += f"{BGRN}{ch}"
+        ecg_str += RST
+
+        ecg_vis_len = 2 + ecg_width + len(hr_vis)
+        ecg_rpad = inner_w - ecg_vis_len
+        if ecg_rpad < 0:
+            ecg_rpad = 0
+        ecg_line = f" {BC}\u2502{RST}  {ecg_str}{hr_colored}{' ' * ecg_rpad}{BC}\u2502{RST}"
+
+        # ── Row 3: Vitals ──
+        v_str = (
+            f"  {DWHT}Temp{RST} {tc}{t_v}\u00b0{t_u}{RST}"
+            f"    {DWHT}BP{RST} {bpc}{bp_v}{RST}"
+            f"    {DWHT}SpO2{RST} {oc}{o_v}{o_u}{RST}"
+            f"    {DWHT}Resp{RST} {rc}{r_v} {r_u}{RST}"
         )
+        v_vis = f"  Temp {t_v}\u00b0{t_u}    BP {bp_v}    SpO2 {o_v}{o_u}    Resp {r_v} {r_u}"
+        v_rpad = inner_w - len(v_vis)
+        if v_rpad < 0:
+            v_rpad = 0
+        vitals_line = f" {BC}\u2502{RST}{v_str}{' ' * v_rpad}{BC}\u2502{RST}"
 
-        lines = [
-            f"  {ecg_colored}{hr_display}",
-            vals,
-            "",
-            sep,
-        ]
+        # ── Row 4: Bottom border ──
+        bottom = f" {BC}\u2514{'\u2500' * inner_w}\u2518{RST}"
+
+        lines = [top, header, ecg_line, vitals_line, bottom]
 
         # ── Write to screen with cursor save/restore ──
         buf = "\033[s"
@@ -179,32 +224,17 @@ class VitalsAnimator:
 
 
 # ─── Screen layout ─────────────────────────────────────────────────
-# Row 1:    Header line
-# Row 2:    Separator
-# Row 3:    (blank)
-# Row 4-7:  Vitals monitor (4 lines, animated by VitalsAnimator)
-# Rows 8+:  Conversation, help, input prompt
+# Rows 1-5:  Patient monitor box (animated by VitalsAnimator)
+#   Row 1: ┌─ MedSim AI ────────────────────────────────┐
+#   Row 2: │  Patient: Name                  Time: 0:00 │
+#   Row 3: │  ▁▂▁────▃█▃────▁▂▁────▃█▃───   ♥ 76 bpm   │
+#   Row 4: │  Temp 98.5°F  BP 110/70  SpO2 99%  Resp 16 │
+#   Row 5: └────────────────────────────────────────────┘
+# Row 6+:  Conversation, help, input prompt
 
-VITALS_START_ROW = 4
-VITALS_HEIGHT = 4
-STATIC_START_ROW = VITALS_START_ROW + VITALS_HEIGHT
-
-
-def draw_header(patient_name):
-    """Draw the 2-line header at rows 1-2."""
-    tw = os.get_terminal_size().columns
-    elapsed = ""
-    if start_time:
-        secs = int(time.time() - start_time)
-        mins, s = divmod(secs, 60)
-        elapsed = f"{mins}:{s:02d}"
-
-    left = f"  {BRED}+{RST}  {BCYN}MedSim AI{RST}  {BRED}+{RST}  {DWHT}Patient:{RST} {BCYN}{patient_name}{RST}"
-    right = f"{DWHT}Time:{RST} {BWHT}{elapsed}{RST}"
-
-    sys.stdout.write(f"\033[1;1H\033[2K{left}    {right}\n")
-    sys.stdout.write(f"\033[2K{DGRN}" + "\u2500" * tw + f"{RST}\n")
-    sys.stdout.flush()
+VITALS_START_ROW = 1
+VITALS_HEIGHT = 5
+STATIC_START_ROW = VITALS_START_ROW + VITALS_HEIGHT + 1
 
 
 def draw_static_area(patient_name):
@@ -259,14 +289,8 @@ def draw_static_area(patient_name):
 
 
 def redraw_screen(patient_name):
-    """Full screen redraw (header + vitals placeholder + static area)."""
+    """Full screen redraw (clear + static area; monitor box drawn by animator)."""
     sys.stdout.write("\033[2J\033[H")  # clear screen, cursor home
-    draw_header(patient_name)
-    # Row 3: blank
-    sys.stdout.write("\033[3;1H\033[2K\n")
-    # Rows 4-10: leave blank for VitalsAnimator
-    for r in range(VITALS_START_ROW, VITALS_START_ROW + VITALS_HEIGHT):
-        sys.stdout.write(f"\033[{r};1H\033[2K\n")
     draw_static_area(patient_name)
     sys.stdout.flush()
 
@@ -456,10 +480,10 @@ def main():
         PROMPT_COOLDOWN = 7
         should_restart = False
 
-        # Move cursor to input row
+        # Move cursor to input row (no \n to avoid scrolling the screen)
         th = os.get_terminal_size().lines
         input_row = th
-        prompt_str = f"\033[{input_row};1H\033[2K\n  {BGRN}Doctor > {RST}"
+        prompt_str = f"\033[{input_row};1H\033[2K  {BGRN}Doctor > {RST}"
 
         while True:
             try:
@@ -533,33 +557,37 @@ def main():
                 last_query = query
                 conversation_log.append(("doctor", query))
 
+                # Stop animator during streaming to prevent cursor conflicts
+                animator.stop()
+                time.sleep(0.05)
+
+                # Show streaming response below the monitor
+                resp_row = STATIC_START_ROW
+                sys.stdout.write(f"\033[{resp_row};1H\033[2K  {BCYN}{patient_name}:{RST} ")
+                sys.stdout.flush()
+
                 while True:
                     try:
                         sock.sendall(query.encode('utf-8'))
                         response_text = ""
-                        sys.stdout.write(f"\n  {BCYN}{patient_name}:{RST} ")
-                        sys.stdout.flush()
                         for tag_type, content in stream_response(sock):
                             if tag_type == "text":
                                 sys.stdout.write(content)
                                 sys.stdout.flush()
                                 response_text += content
-                        sys.stdout.write("\n")
-                        sys.stdout.flush()
 
                         if response_text.strip():
                             conversation_log.append(("patient", response_text.strip()))
 
                         break
                     except (TimeoutError, ConnectionError) as e:
-                        sys.stdout.write(f"\n  {BRED}Lost connection: {e}. Reconnecting...{RST}\n")
+                        sys.stdout.write(f"\033[{resp_row + 1};1H\033[2K  {BRED}Lost connection: {e}. Reconnecting...{RST}")
                         sys.stdout.flush()
                         sock.close()
                         sock, patient_name = reconnect_and_resend(scenario, last_query)
 
-                # After Q&A, redraw the static area to update conversation + SAMPLE
+                # After Q&A, redraw everything and restart animator
                 last_activity = time.time()
-                animator.stop()
                 redraw_screen(patient_name)
                 animator = VitalsAnimator(patient_name, VITALS_START_ROW)
                 animator.start()
