@@ -296,6 +296,8 @@ def draw_static_area(patient_name):
             sys.stdout.write(f"\033[{row};1H\033[2K{indent}{cont}")
             row += 1
 
+    next_conv_row = row  # where the next message would go
+
     # Clear leftover rows between conversation and separator
     while row < conv_bottom:
         sys.stdout.write(f"\033[{row};1H\033[2K")
@@ -309,13 +311,16 @@ def draw_static_area(patient_name):
     sys.stdout.write(f"\033[{row};1H\033[2K")
 
     sys.stdout.flush()
+    return next_conv_row
 
 
 def redraw_screen(patient_name):
-    """Full screen redraw (clear + static area; monitor box drawn by animator)."""
+    """Full screen redraw (clear + static area; monitor box drawn by animator).
+    Returns the row where the next conversation entry would go."""
     sys.stdout.write("\033[2J\033[H")  # clear screen, cursor home
-    draw_static_area(patient_name)
+    next_row = draw_static_area(patient_name)
     sys.stdout.flush()
+    return next_row
 
 
 # ─── Networking ────────────────────────────────────────────────────
@@ -497,7 +502,7 @@ def main():
 
         last_query = None
         last_prompt_time = 0
-        PROMPT_COOLDOWN = 7
+        PROMPT_COOLDOWN = 3
         should_restart = False
 
         # Spam detection
@@ -586,15 +591,20 @@ def main():
                     continue
                 last_prompt_time = current_time
 
-                # Regular question — animator keeps running (lock protects stdout)
+                # Regular question
                 last_query = query
                 conversation_log.append(("doctor", query))
 
-                # Show streaming response below the monitor
-                resp_row = STATIC_START_ROW
-                with _write_lock:
-                    sys.stdout.write(f"\033[{resp_row};1H\033[2K  {BCYN}{patient_name}:{RST} ")
-                    sys.stdout.flush()
+                # Stop animator to avoid cursor conflicts during streaming
+                animator.stop()
+                time.sleep(0.05)
+
+                # Redraw so the doctor's message appears in conversation
+                resp_row = redraw_screen(patient_name)
+
+                # Position cursor for the streamed patient response
+                sys.stdout.write(f"\033[{resp_row};1H\033[2K  {BCYN}{patient_name}:{RST} ")
+                sys.stdout.flush()
 
                 while True:
                     try:
@@ -602,9 +612,8 @@ def main():
                         response_text = ""
                         for tag_type, content in stream_response(sock):
                             if tag_type == "text":
-                                with _write_lock:
-                                    sys.stdout.write(content)
-                                    sys.stdout.flush()
+                                sys.stdout.write(content)
+                                sys.stdout.flush()
                                 response_text += content
 
                         if response_text.strip():
@@ -612,14 +621,12 @@ def main():
 
                         break
                     except (TimeoutError, ConnectionError) as e:
-                        with _write_lock:
-                            sys.stdout.write(f"\033[{resp_row + 1};1H\033[2K  {BRED}Reconnecting...{RST}")
-                            sys.stdout.flush()
+                        sys.stdout.write(f"\033[{resp_row + 1};1H\033[2K  {BRED}Reconnecting...{RST}")
+                        sys.stdout.flush()
                         sock.close()
                         sock, patient_name = reconnect_and_resend(scenario, last_query)
 
-                # After Q&A, redraw conversation area (animator keeps running)
-                animator.stop()
+                # After Q&A, redraw with full conversation and restart animator
                 redraw_screen(patient_name)
                 animator.start()
 
