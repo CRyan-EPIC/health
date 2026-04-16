@@ -1,0 +1,181 @@
+﻿ILLNESS INFORMATION
+Disease
+	Signs
+	Symptoms
+	Risk Factors
+	Incubation Time
+	Treatment
+	Food Poisoning
+
+
+	Vomiting, diarrhea
+	Stomach cramps, nausea, fever
+	Eating spoiled or contaminated food
+	1 to 48 hours
+	Rest, fluids, avoid high fat or sugar foods
+	Head Lice
+
+
+	Bugs/nits in hair, visible eggs
+	Itchy scalp, tickling feeling on head
+	Close contact, sharing hats or combs
+	Eggs hatch in 7–10 days
+	Special shampoos, fine-tooth combing, clean bedding
+	Pink Eye   (Conjunctivitis)
+
+
+	Red, watery eyes, discharge
+	Itchy or burning eyes, blurry vision
+	Viral/bacterial infection, allergies
+	1 to 3 days (viral), up to 5 days (bacterial)
+	Eye drops, warm compresses, stay home when contagious
+	Allergies
+
+
+
+
+	Runny nose, red eyes, sneezing
+	Itchy eyes/nose, coughing, fatigue
+	Pollen, dust, pets, mold
+	Immediate after exposure
+	Antihistamines, avoiding triggers
+	Acne 
+	Pimples, blackheads, red bumps
+	Sore or itchy spots, low self-esteem
+	Hormones, oily skin, diet, poor hygiene
+	Develops over days to weeks
+	Gentle face wash, creams, dermatologist referral
+	Eczema
+
+
+	Dry, red, cracked skin
+	Itching, irritation, burning sensation
+	Allergies, stress, irritants
+	Chronic condition (may flare anytime)
+	Moisturizers, steroid creams, avoid triggers
+	Flu (Influenza) 
+	Fever, chills, body aches
+	Tiredness, sore throat, cough
+	Close contact with ill people, winter season
+	1 to 4 days
+	Rest, fluids, antiviral meds (sometimes), flu shot
+	Asthma 
+	Wheezing, coughing 
+	Chest tightness, shortness of breath
+	Allergies, exercise, cold air
+	Triggered immediately
+	Inhalers, avoid triggers, long-term meds
+	Strep Throat
+
+
+	Red/white patches or swelling on tonsils, fever
+	Sore throat, headache, stomach ache, body aches
+	Close contact, shared drinks
+	2 to 5 days
+	Antibiotics, rest, fluids
+	Common Cold 
+	Runny nose, sneezing, mild cough, mild fever
+	Sore throat, tiredness, congestion, headache 
+	Poor handwashing, being near sick people
+	1 to 3 days
+	Rest, fluids, over-the-  counter meds
+	Type 1 Diabetes
+
+
+	Frequent peeing, weight loss, fruity smelling breath
+Elevated blood sugar
+	Thirst, hunger, shaky, fatigue, blurred vision
+	Family history and genetics. Some virus can trigger the autoimmune response
+	Chronic
+Onset common between 4-7 or 10-14 y/o
+	Insulin injections and careful tracking of carbohydrates and blood sugar levels
+	Caffeine Toxicity
+	Fast heart, seizure, diarrhea, sleep changes, muscle twitches, high blood pressure
+	Headache, anxiety, thirsty, shortness of breath, confusion, nausea
+	Drinking too much caffeine
+	Symptoms occur within 1-3 hours after consumption
+	Manage symptoms. May need IV fluids, activated charcoal, dialysis, CPR (if your heart stops)
+	
+
+
+
+Mental Health Information
+Condition
+	Signs
+	Symptoms
+	Symptoms: How Long
+	Symptoms:How Often
+	Treatment/Support
+	Clinical Depression
+	Tearful, angry outbursts, frustration over small things, altered sleep patterns, weight changes 
+	Feeling: sad, hopeless, irritable, tired, anxious, restless, or guilty.
+Difficulty concentrating or making decisions, appetite changes , disinterest in hobbies
+	Occurring for more than 2 weeks
+(outside of a major life change)
+	Often enough to cause daily disturbances in your normal activities, relationships, and/or school or social activities
+	Medication 
+
+
+Therapy
+
+
+Lifestyle changes
+	Computer Vision Syndrome
+	Eye redness, eye tearing
+	Vision changes (double or blurred), dry eyes, eye pain, eye fatigue, sensitivity to light, headaches, neck and shoulder pain
+	Must rule out vision impairment first.
+Symptoms are worse with screen use (especially long periods of screen use)
+	Vision changes can continue occurring even when off screens. Symptoms typically get worse when on screens 
+	
+
+Eye drops, modifying screen angles, glare, and contrast. Limit time or increase breaks
+	Internet Gaming Disorder
+	Withdrawal signs include: aggression or angry outbursts
+	Always thinking about gaming, need more time, losing control, losing interest in other things, lying about play time, using game to hide feelings, problems at home or school
+	5 symptoms must be present during the same year
+	Often enough to cause daily disturbances in your normal activities, relationships, and/or school or social activities
+	Individual or family therapy
+	
+
+
+
+
+
+
+
+
+
+INJURY INFORMATION
+Injury
+	Signs
+	Symptoms
+	Risk Factors
+	Treatment
+	Ankle Sprain
+
+
+	Swelling, bruising, limited movement
+	Pain, tenderness, trouble walking
+	Sports, jumping/landing wrong, uneven ground
+	Rest, ice, compression, elevation (RICE), physical therapy
+	Fractured Arm/Wrist 
+	Swelling, visible deformity, bruising
+	Intense pain, trouble moving arm/wrist
+	Falls, contact sports, skateboarding
+	Immobilization (cast/splint), x-ray, possible surgery
+	Knee Sprain
+ACL/MCL Injury  
+	Swollen knee, limping, instability
+	Pain during movement, stiffness
+	Running, twisting motions, sports
+	RICE, knee brace, physical therapy
+	Dislocated Shoulder 
+	Bulge or deformity in shoulder area
+	Sharp pain, can't move shoulder, numbness or tingling in fingers/arm
+	Falls, sports collisions
+	Popping joint back into place (by doctor), sling, rehab
+	Clavicle (collar bone) Fracture 
+	Swelling in upper chest, deformity in upper chest, bruising in upper chest
+	Pain in upper chest, pain when moving arm on injured side 
+	One of the most fractured bones in the body. Sports, trauma, falls
+	x-ray, pain reliever, ice, elevation with sling, possible surgery

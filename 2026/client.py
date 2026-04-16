@@ -490,6 +490,12 @@ def main():
         PROMPT_COOLDOWN = 7
         should_restart = False
 
+        # Spam detection
+        rapid_count = 0
+        last_enter_time = 0
+        RAPID_WINDOW = 0.8     # seconds between presses to count as "rapid"
+        SPAM_LIMIT = 3         # rapid presses before warning
+
         # Prompt positions at the last terminal row
         th = os.get_terminal_size().lines
         input_row = th
@@ -498,7 +504,36 @@ def main():
         while True:
             try:
                 query = blocking_input(prompt_str)
+
+                # Clear the input line immediately so typed text disappears
+                with _write_lock:
+                    sys.stdout.write(f"\033[{input_row};1H\033[2K")
+                    sys.stdout.flush()
+
                 query = query.strip()
+
+                # Spam detection — warn on rapid repeated Enter presses
+                now = time.time()
+                if now - last_enter_time < RAPID_WINDOW:
+                    rapid_count += 1
+                else:
+                    rapid_count = 0
+                last_enter_time = now
+
+                if rapid_count >= SPAM_LIMIT:
+                    with _write_lock:
+                        sys.stdout.write(
+                            f"\033[{input_row - 1};1H\033[2K"
+                            f"  {BRED}Slow down! Wait a moment before pressing Enter.{RST}"
+                        )
+                        sys.stdout.flush()
+                    time.sleep(1.5)
+                    rapid_count = 0
+                    # Redraw to clear the warning
+                    animator.stop()
+                    redraw_screen(patient_name)
+                    animator.start()
+                    continue
 
                 if len(query.encode('utf-8')) > MAX_PROMPT_LENGTH:
                     continue

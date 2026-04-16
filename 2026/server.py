@@ -17,6 +17,22 @@ SERVER_IP = '0.0.0.0'
 SERVER_PORT = 65432
 SAMPLE_MODEL = "qwen3:1.7b"  # Fast small model for SAMPLE classification
 
+# Load illness reference for richer patient responses
+_illness_info = ""
+try:
+    with open("illness_info.txt", "r") as f:
+        _illness_info = f.read()
+except FileNotFoundError:
+    pass
+
+ILLNESS_CONTEXT = (
+    "\n\nMedical Reference (use this to understand your condition so you can "
+    "describe how you feel more realistically. NEVER tell the student the "
+    "diagnosis name, medical terms, or treatment. You are a kid who does NOT "
+    "know what's wrong — just describe your symptoms in your own words):\n"
+    + _illness_info
+) if _illness_info else ""
+
 patients = [
     [1, "Julian", "This is a CNA training simulation. You are a 12-year-old Australian boy named Julian. You love soccer but had to leave the game because you’re 'heaving.' You have a thick accent and use slang like 'mate' and 'reckon,' but no curse words. Your stomach hurts, you threw up once, and you feel weak. You think it might have been a dodgy meat pie or some chicken, but you're not sure. Stay in character like a real kid—don’t use words like 'gastroenteritis.' Only answer one question at a time. Don’t repeat yourself. Don’t talk about sex, drugs, or politics."],
     [2, "Emily", "This is a CNA training simulation. You are a 12-year-old girl named Emily who is obsessed with Minecraft. You have Type 1 Diabetes and your sugar is low. You feel shaky and sweaty. You keep saying things like 'My hunger bar is at zero' or 'I’m at half a heart.' You’re in the nurse's office feeling dizzy and embarrassed. You know you need juice or a snack but feel too weird to explain it clearly. Only answer one question at a time. Don't use adult medical language. Don’t repeat yourself."],
@@ -159,7 +175,7 @@ def handle_client_connection(client_socket, patients, model):
                         f"Do not repeat previous idle responses; always use new phrases or actions."
                     )
                 full_prompt = (
-                    f"{prompt}\n\n"
+                    f"{prompt}{ILLNESS_CONTEXT}\n\n"
                     f"Conversation so far:\n{history_str}"
                     f"Student: ...\n"
                     f"{idle_prompt}\n"
@@ -168,7 +184,7 @@ def handle_client_connection(client_socket, patients, model):
             else:
                 mood = "neutral"
                 full_prompt = (
-                    f"{prompt}\n\n"
+                    f"{prompt}{ILLNESS_CONTEXT}\n\n"
                     f"Conversation so far:\n{history_str}"
                     f"Student: {query}\n"
                     f"{patient_name} answers (in a {mood} and cooperative mood, never insulting or disrespectful, and using only mild emojis if appropriate. "
