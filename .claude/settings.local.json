@@ -1,0 +1,15 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(file /home/cameron/claude/ai_telehealth/2026/*)",
+      "Bash(wc -l /home/cameron/claude/ai_telehealth/2026/*.py)",
+      "Bash(pip show *)",
+      "Bash(python3 -c \"import rich; print\\('rich available:', rich.__version__\\)\")",
+      "Bash(python3 -m py_compile server.py)",
+      "Bash(python3 -m py_compile client.py)",
+      "Bash(python3 -m py_compile scoring.py)",
+      "Bash(python3 -m py_compile vitals.py)",
+      "Bash(python3 *)"
+    ]
+  }
+}
