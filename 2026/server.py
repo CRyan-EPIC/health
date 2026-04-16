@@ -207,7 +207,7 @@ def handle_client_connection(client_socket, patients, model):
 def select_model():
     model = input("Enter Ollama model to use (e.g., gemma3:4b, gemma4:e2b-it-q4_K_M): ").strip()
     if not model:
-        model = "gemma3:12b-it-q4_K_M"
+        model = "gemma3:4b"
     return model
 
 def main():

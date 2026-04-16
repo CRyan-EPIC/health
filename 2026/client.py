@@ -242,18 +242,22 @@ def draw_static_area(patient_name):
     """Draw everything below the vitals monitor (conversation, help, prompt)."""
     tw = os.get_terminal_size().columns
     th = os.get_terminal_size().lines
-    row = STATIC_START_ROW
 
-    # Conversation — word-wrap long messages across multiple rows
-    max_rows = th - row - 3  # leave room for separator + help + prompt
-    recent = conversation_log[-max_rows:]  # rough limit; may use fewer
+    # Reserve bottom rows: separator + prompt = 2 rows
+    conv_top = STATIC_START_ROW
+    conv_bottom = th - 2  # last usable row for conversation
+    available_rows = conv_bottom - conv_top
 
-    for msg_role, msg_text in recent:
-        if row >= th - 3:
-            break
+    # Pre-wrap all messages and measure display height, then pick the
+    # newest messages that fit — working backwards so the latest are
+    # always visible.
+    entries = []  # [(prefix, prefix_len, wrapped_lines)]
+    total_lines = 0
+
+    for msg_role, msg_text in reversed(conversation_log):
         if msg_role == "doctor":
             prefix = f"  {BGRN}Doctor:{RST} "
-            prefix_len = 10  # "  Doctor: "
+            prefix_len = 10
         elif msg_role == "patient":
             prefix = f"  {BCYN}{patient_name}:{RST} "
             prefix_len = len(f"  {patient_name}: ")
@@ -263,28 +267,37 @@ def draw_static_area(patient_name):
 
         avail = max(20, tw - prefix_len - 1)
         wrapped = textwrap.wrap(msg_text, width=avail) or [""]
+        lines_needed = len(wrapped)
 
-        # First line with role prefix
+        if total_lines + lines_needed > available_rows:
+            break
+
+        entries.append((msg_role, prefix, prefix_len, wrapped))
+        total_lines += lines_needed
+
+    entries.reverse()  # back to chronological order
+
+    # ── Render conversation ──
+    row = conv_top
+
+    if not entries and not conversation_log:
+        sys.stdout.write(f"\033[{row};1H\033[2K  {DIM}Start by asking the patient a question...{RST}")
+        row += 1
+
+    for msg_role, prefix, prefix_len, wrapped in entries:
         first = f"{prefix}{wrapped[0]}"
         if msg_role == "system":
             first += RST
         sys.stdout.write(f"\033[{row};1H\033[2K{first}")
         row += 1
 
-        # Continuation lines indented to align with first line's text
         indent = " " * prefix_len
         for cont in wrapped[1:]:
-            if row >= th - 3:
-                break
             sys.stdout.write(f"\033[{row};1H\033[2K{indent}{cont}")
             row += 1
 
-    if not conversation_log:
-        sys.stdout.write(f"\033[{row};1H\033[2K  {DIM}Start by asking the patient a question...{RST}")
-        row += 1
-
-    # Clear leftover lines from previous longer conversations
-    while row < th - 3:
+    # Clear leftover rows between conversation and separator
+    while row < conv_bottom:
         sys.stdout.write(f"\033[{row};1H\033[2K")
         row += 1
 
@@ -292,11 +305,7 @@ def draw_static_area(patient_name):
     sys.stdout.write(f"\033[{row};1H\033[2K{DGRN}" + "\u2500" * tw + f"{RST}")
     row += 1
 
-    # Help line
-    sys.stdout.write(f"\033[{row};1H\033[2K  {BCYN}.reset{RST} {DWHT}Reset mood{RST}")
-    row += 1
-
-    # Prompt position
+    # Prompt row (cleared, ready for input)
     sys.stdout.write(f"\033[{row};1H\033[2K")
 
     sys.stdout.flush()
