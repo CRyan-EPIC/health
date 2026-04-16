@@ -144,25 +144,26 @@ class VitalsAnimator:
         oc  = BRED if o_ab else BCYN
         rc  = BRED if r_ab else WHT
 
-        # ── Compose 7-line display ────────────────────
-        # Line 0: blank spacer
-        # Line 1: ECG waveform + large HR number
+        # ── Compose 4-line display ────────────────────
+        # Line 0: ECG waveform + HR
+        # Line 1: Temp / BP / SpO2 / Resp
         # Line 2: blank
-        # Line 3: Temp   BP   SpO2   Resp  (labels)
-        # Line 4: values
-        # Line 5: blank spacer
-        # Line 6: thin separator
+        # Line 3: separator
 
         hr_display = f"  {BRED}\u2665{RST} {hrc}{hr_v}{RST} {DWHT}bpm{RST}"
 
         sep = f"{DGRN}" + "\u2500" * tw + f"{RST}"
 
+        vals = (
+            f"    {DWHT}Temp:{RST} {tc}{t_v} {t_u}{RST}"
+            f"      {DWHT}BP:{RST} {bpc}{bp_v}{RST}"
+            f"      {DWHT}SpO2:{RST} {oc}{o_v}{o_u}{RST}"
+            f"      {DWHT}Resp:{RST} {rc}{r_v} {r_u}{RST}"
+        )
+
         lines = [
-            "",
             f"  {ecg_colored}{hr_display}",
-            "",
-            f"    {DWHT}Temp{RST}          {DWHT}BP{RST}            {DWHT}SpO2{RST}          {DWHT}Resp{RST}",
-            f"    {tc}{t_v} {t_u}{RST}        {bpc}{bp_v}{RST}          {oc}{o_v}{o_u}{RST}           {rc}{r_v} {r_u}{RST}",
+            vals,
             "",
             sep,
         ]
@@ -178,16 +179,14 @@ class VitalsAnimator:
 
 
 # ─── Screen layout ─────────────────────────────────────────────────
-# Row 1:     Header line
-# Row 2:     Separator
-# Row 3:     (blank)
-# Row 4-10:  Vitals monitor (7 lines, animated by VitalsAnimator)
-# Row 11:    SAMPLE compact line
-# Row 12:    (blank)
-# Rows 13+:  Conversation, help, input prompt
+# Row 1:    Header line
+# Row 2:    Separator
+# Row 3:    (blank)
+# Row 4-7:  Vitals monitor (4 lines, animated by VitalsAnimator)
+# Rows 8+:  Conversation, help, input prompt
 
 VITALS_START_ROW = 4
-VITALS_HEIGHT = 7
+VITALS_HEIGHT = 4
 STATIC_START_ROW = VITALS_START_ROW + VITALS_HEIGHT
 
 
@@ -208,39 +207,13 @@ def draw_header(patient_name):
     sys.stdout.flush()
 
 
-def draw_sample_line():
-    """Draw a compact 1-line SAMPLE checklist."""
-    parts = []
-    for letter in SAMPLE_LABELS:
-        if letter in sample_covered:
-            parts.append(f"{BGRN}[\u2713]{letter}{RST}")
-        else:
-            parts.append(f"{DIM}[ ]{letter}{RST}")
-    count = len(sample_covered)
-    total = len(SAMPLE_LABELS)
-    line = f"  {BWHT}SAMPLE:{RST} {'  '.join(parts)}   {DWHT}({count}/{total}){RST}"
-    return line
-
-
 def draw_static_area(patient_name):
-    """Draw everything below the vitals monitor (SAMPLE, conversation, help, prompt)."""
+    """Draw everything below the vitals monitor (conversation, help, prompt)."""
     tw = os.get_terminal_size().columns
     th = os.get_terminal_size().lines
     row = STATIC_START_ROW
 
-    # Row 8: blank
-    sys.stdout.write(f"\033[{row};1H\033[2K")
-    row += 1
-
-    # Row 9: SAMPLE
-    sys.stdout.write(f"\033[{row};1H\033[2K{draw_sample_line()}")
-    row += 1
-
-    # Row 10: separator
-    sys.stdout.write(f"\033[{row};1H\033[2K{DGRN}" + "\u2500" * tw + f"{RST}")
-    row += 1
-
-    # Rows 11+: Conversation
+    # Conversation
     max_conv_lines = max(4, th - row - 4)  # leave room for help + input
     recent = conversation_log[-(max_conv_lines):]
 
@@ -576,11 +549,6 @@ def main():
 
                         if response_text.strip():
                             conversation_log.append(("patient", response_text.strip()))
-
-                        if sample_covered:
-                            covered = ", ".join(SAMPLE_LABELS[l] for l in sorted(sample_covered))
-                            sys.stdout.write(f"  {DGRN}SAMPLE: {len(sample_covered)}/6 ({covered}){RST}\n")
-                            sys.stdout.flush()
 
                         break
                     except (TimeoutError, ConnectionError) as e:
