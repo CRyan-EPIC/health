@@ -116,79 +116,79 @@ class VitalsAnimator:
         hr_val = vitals.get("HR", (72, "bpm", False))[0]
 
         # ── ECG waveform ──────────────────────────────
-        # Scroll speed tied to heart rate:
-        #   beats_per_sec * chars_per_beat = chars_per_sec
         elapsed = now - self._birth
         beats_per_sec = hr_val / 60.0
         chars_per_sec = beats_per_sec * BEAT_LEN
         offset = int(elapsed * chars_per_sec)
 
-        ecg_width = tw - 6
+        ecg_width = tw - 20  # leave room for HR number on the right
         ecg_colored = ""
         for i in range(ecg_width):
             ch = BEAT_PATTERN[(offset + i) % BEAT_LEN]
-            if ch == "─":
+            if ch == "\u2500":
                 ecg_colored += f"{DGRN}{ch}"
             else:
                 ecg_colored += f"{BGRN}{ch}"
         ecg_colored += RST
 
-        # ── Vital values line ─────────────────────────
-        parts = []
-
+        # ── Extract vitals ────────────────────────────
         hr_v, hr_u, hr_ab = vitals.get("HR", (72, "bpm", False))
-        c = BRED if hr_ab else BGRN
-        parts.append(f"{BRED}\u2665{RST} {DWHT}HR:{RST} {c}{hr_v} {hr_u}{RST}")
-
         t_v, t_u, t_ab = vitals.get("Temp", (98.6, "F", False))
-        c = BRED if t_ab else WHT
-        parts.append(f"{DWHT}Temp:{RST} {c}{t_v}{RST}")
-
         bp_v, _, bp_ab = vitals.get("BP", ("--/--", "", False))
-        c = BRED if bp_ab else WHT
-        parts.append(f"{DWHT}BP:{RST} {c}{bp_v}{RST}")
-
         o_v, o_u, o_ab = vitals.get("SpO2", (99, "%", False))
-        c = BRED if o_ab else BCYN
-        parts.append(f"{DWHT}SpO2:{RST} {c}{o_v}{o_u}{RST}")
-
         r_v, r_u, r_ab = vitals.get("Resp", (16, "/min", False))
-        c = BRED if r_ab else WHT
-        parts.append(f"{DWHT}Resp:{RST} {c}{r_v}{r_u}{RST}")
 
-        vals_line = "   ".join(parts)
+        hrc = BRED if hr_ab else BGRN
+        tc  = BRED if t_ab else WHT
+        bpc = BRED if bp_ab else WHT
+        oc  = BRED if o_ab else BCYN
+        rc  = BRED if r_ab else WHT
 
-        # ── Compose 4-line display ────────────────────
-        iw = tw - 2
-        title = " Vitals Monitor "
-        dashes_after = max(0, iw - len(title) - 1)
-        line0 = f"{DGRN}\u256d\u2500{BGRN}{title}{DGRN}" + "\u2500" * dashes_after + f"\u256e{RST}"
-        line1 = f"{DGRN}\u2502{RST} {ecg_colored} {DGRN}\u2502{RST}"
-        line2 = f"{DGRN}\u2502{RST} {vals_line}"
-        line3 = f"{DGRN}\u2570" + "\u2500" * iw + f"\u256f{RST}"
+        # ── Compose 7-line display ────────────────────
+        # Line 0: blank spacer
+        # Line 1: ECG waveform + large HR number
+        # Line 2: blank
+        # Line 3: Temp   BP   SpO2   Resp  (labels)
+        # Line 4: values
+        # Line 5: blank spacer
+        # Line 6: thin separator
+
+        hr_display = f"  {BRED}\u2665{RST} {hrc}{hr_v}{RST} {DWHT}bpm{RST}"
+
+        sep = f"{DGRN}" + "\u2500" * tw + f"{RST}"
+
+        lines = [
+            "",
+            f"  {ecg_colored}{hr_display}",
+            "",
+            f"    {DWHT}Temp{RST}          {DWHT}BP{RST}            {DWHT}SpO2{RST}          {DWHT}Resp{RST}",
+            f"    {tc}{t_v} {t_u}{RST}        {bpc}{bp_v}{RST}          {oc}{o_v}{o_u}{RST}           {rc}{r_v} {r_u}{RST}",
+            "",
+            sep,
+        ]
 
         # ── Write to screen with cursor save/restore ──
-        buf = "\033[s"  # save cursor
-        for i, line in enumerate([line0, line1, line2, line3]):
+        buf = "\033[s"
+        for i, line in enumerate(lines):
             row = self.start_row + i
             buf += f"\033[{row};1H\033[2K{line}"
-        buf += "\033[u"  # restore cursor
+        buf += "\033[u"
         sys.stdout.write(buf)
         sys.stdout.flush()
 
 
 # ─── Screen layout ─────────────────────────────────────────────────
-# Row 1:    Header line
-# Row 2:    Separator
-# Row 3:    (blank)
-# Row 4-7:  Vitals monitor (animated by VitalsAnimator)
-# Row 8:    (blank)
-# Row 9:    SAMPLE compact line
-# Row 10:   Separator
-# Rows 11+: Conversation, help, input prompt
+# Row 1:     Header line
+# Row 2:     Separator
+# Row 3:     (blank)
+# Row 4-10:  Vitals monitor (7 lines, animated by VitalsAnimator)
+# Row 11:    SAMPLE compact line
+# Row 12:    (blank)
+# Rows 13+:  Conversation, help, input prompt
 
 VITALS_START_ROW = 4
-STATIC_START_ROW = 8
+VITALS_HEIGHT = 7
+STATIC_START_ROW = VITALS_START_ROW + VITALS_HEIGHT
 
 
 def draw_header(patient_name):
@@ -291,8 +291,8 @@ def redraw_screen(patient_name):
     draw_header(patient_name)
     # Row 3: blank
     sys.stdout.write("\033[3;1H\033[2K\n")
-    # Rows 4-7: leave blank for VitalsAnimator
-    for r in range(VITALS_START_ROW, VITALS_START_ROW + 4):
+    # Rows 4-10: leave blank for VitalsAnimator
+    for r in range(VITALS_START_ROW, VITALS_START_ROW + VITALS_HEIGHT):
         sys.stdout.write(f"\033[{r};1H\033[2K\n")
     draw_static_area(patient_name)
     sys.stdout.flush()
