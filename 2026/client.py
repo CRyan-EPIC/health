@@ -15,7 +15,7 @@ from rich import box
 
 from vitals import fluctuate_vitals, PATIENT_VITALS, BEAT_PATTERN, BEAT_LEN
 
-SERVER_IP = '10.171.132.99'
+SERVER_IP = '10.0.0.34'
 #SERVER_IP = '10.171.159.254'
 SERVER_PORT = 65432
 SOCKET_TIMEOUT = 30
@@ -370,6 +370,7 @@ def connect_to_server(scenario):
             sys.stdout.write(f"  {DIM}Connecting to server...{RST}\n")
             sys.stdout.flush()
             sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
             sock.settimeout(SOCKET_TIMEOUT)
             sock.connect((SERVER_IP, SERVER_PORT))
             sock.sendall(str(scenario).encode('utf-8'))

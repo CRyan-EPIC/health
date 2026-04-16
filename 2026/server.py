@@ -5,17 +5,11 @@ import json
 import ollama
 
 from vitals import get_vitals, PATIENT_VITALS
-from scoring import (
-    SAMPLE_CLASSIFICATION_PROMPT,
-    classify_sample_from_response,
-    check_diagnosis,
-    PATIENT_DIAGNOSES,
-)
+from scoring import check_diagnosis, PATIENT_DIAGNOSES
 
 SERVER_IP = '0.0.0.0'
 #SERVER_IP = '10.171.159.254'
 SERVER_PORT = 65432
-SAMPLE_MODEL = "qwen3:1.7b"  # Fast small model for SAMPLE classification
 
 # Load illness reference for richer patient responses
 _illness_info = ""
@@ -57,21 +51,9 @@ patients = [
     [21, "Mason", "This is a CNA training simulation. You are pretending to be a 12-year-old boy named Mason. You have a broken collarbone from a fall. Your quirk is that you are obsessed with outer space and you think an alien tractor beam (or a gravity anomaly) caused your fall. You’re in the nurse’s office holding your arm very still. Your shoulder looks slumped and lower than the other one. It hurts to breathe deep and you heard a 'crunch' when you hit the ground. You might say, 'The gravity in the gym shifted and my wing took the hit,' or 'My shoulder bone feels like it’s floating in orbit.' Stay in character. Only answer one question at a time. Don’t use words like 'clavicle' or 'fracture.' Don’t talk about sex, illegal drugs, or politics. Don’t repeat yourself. Don't let them touch it without a warning!"]
 ]
 
-def classify_sample(question, model=SAMPLE_MODEL):
-    """Run SAMPLE classification on a student question using a fast small model."""
-    try:
-        prompt = SAMPLE_CLASSIFICATION_PROMPT.format(question=question)
-        response = ollama.chat(
-            model=model,
-            messages=[{"role": "user", "content": prompt}],
-            stream=False,
-        )
-        return classify_sample_from_response(response['message']['content'])
-    except Exception:
-        return set()
-
-
 def handle_client_connection(client_socket, patients, model):
+    # Disable Nagle's algorithm so each token streams immediately
+    client_socket.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
     try:
         # --- Robust scenario and patient list validation ---
         try:
@@ -212,16 +194,6 @@ def handle_client_connection(client_socket, patients, model):
 
             # Save this Q&A to conversation history
             conversation_history.append((query, answer.strip()))
-
-            # Run SAMPLE classification in background (non-blocking for the client)
-            if query != "...":
-                sample_hits = classify_sample(query)
-                if sample_hits:
-                    sample_str = "".join(sorted(sample_hits))
-                    try:
-                        client_socket.sendall(f"<<SAMPLE:{sample_str}>>".encode('utf-8'))
-                    except Exception:
-                        pass
 
     except Exception as e:
         try:
