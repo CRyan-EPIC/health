@@ -3,9 +3,8 @@ import sys
 import time
 import getpass
 import os
-import json
 import re
-import select
+import textwrap
 import threading
 
 from rich.console import Console
@@ -21,7 +20,6 @@ SERVER_IP = '10.171.132.99'
 SERVER_PORT = 65432
 SOCKET_TIMEOUT = 30
 RECONNECT_DELAY = 3
-IDLE_TIMEOUT = 60
 MAX_PROMPT_LENGTH = 256
 
 console = Console()
@@ -68,7 +66,9 @@ DCYN = "\033[2;36m"
 sample_covered = set()
 start_time = None
 conversation_log = []
-last_activity = time.time()
+
+# Thread-safe stdout writing (animator + streaming share stdout)
+_write_lock = threading.Lock()
 
 
 # ─── Vitals Animator ───────────────────────────────────────────────
@@ -219,8 +219,9 @@ class VitalsAnimator:
             row = self.start_row + i
             buf += f"\033[{row};1H\033[2K{line}"
         buf += "\033[u"
-        sys.stdout.write(buf)
-        sys.stdout.flush()
+        with _write_lock:
+            sys.stdout.write(buf)
+            sys.stdout.flush()
 
 
 # ─── Screen layout ─────────────────────────────────────────────────
@@ -243,33 +244,46 @@ def draw_static_area(patient_name):
     th = os.get_terminal_size().lines
     row = STATIC_START_ROW
 
-    # Conversation
-    max_conv_lines = max(4, th - row - 4)  # leave room for help + input
-    recent = conversation_log[-(max_conv_lines):]
+    # Conversation — word-wrap long messages across multiple rows
+    max_rows = th - row - 3  # leave room for separator + help + prompt
+    recent = conversation_log[-max_rows:]  # rough limit; may use fewer
 
     for msg_role, msg_text in recent:
         if row >= th - 3:
             break
         if msg_role == "doctor":
-            line = f"  {BGRN}Doctor:{RST} {msg_text}"
+            prefix = f"  {BGRN}Doctor:{RST} "
+            prefix_len = 10  # "  Doctor: "
         elif msg_role == "patient":
-            line = f"  {BCYN}{patient_name}:{RST} {msg_text}"
+            prefix = f"  {BCYN}{patient_name}:{RST} "
+            prefix_len = len(f"  {patient_name}: ")
         else:
-            line = f"  {DIM}{YEL}{msg_text}{RST}"
-        # Truncate to terminal width
-        # Strip ANSI for length check
-        visible = re.sub(r'\033\[[0-9;]*m', '', line)
-        if len(visible) > tw - 1:
-            # Rough truncation (may cut mid-ANSI, but safer than overflow)
-            line = line[:tw + 60] + RST
-        sys.stdout.write(f"\033[{row};1H\033[2K{line}")
+            prefix = f"  {DIM}{YEL}"
+            prefix_len = 2
+
+        avail = max(20, tw - prefix_len - 1)
+        wrapped = textwrap.wrap(msg_text, width=avail) or [""]
+
+        # First line with role prefix
+        first = f"{prefix}{wrapped[0]}"
+        if msg_role == "system":
+            first += RST
+        sys.stdout.write(f"\033[{row};1H\033[2K{first}")
         row += 1
 
-    if not recent:
+        # Continuation lines indented to align with first line's text
+        indent = " " * prefix_len
+        for cont in wrapped[1:]:
+            if row >= th - 3:
+                break
+            sys.stdout.write(f"\033[{row};1H\033[2K{indent}{cont}")
+            row += 1
+
+    if not conversation_log:
         sys.stdout.write(f"\033[{row};1H\033[2K  {DIM}Start by asking the patient a question...{RST}")
         row += 1
 
-    # Clear any leftover lines from previous longer conversations
+    # Clear leftover lines from previous longer conversations
     while row < th - 3:
         sys.stdout.write(f"\033[{row};1H\033[2K")
         row += 1
@@ -282,7 +296,7 @@ def draw_static_area(patient_name):
     sys.stdout.write(f"\033[{row};1H\033[2K  {BCYN}.reset{RST} {DWHT}Reset mood{RST}")
     row += 1
 
-    # Blank + prompt position
+    # Prompt position
     sys.stdout.write(f"\033[{row};1H\033[2K")
 
     sys.stdout.flush()
@@ -380,13 +394,12 @@ def reconnect_and_resend(scenario, last_query):
             time.sleep(RECONNECT_DELAY)
 
 
-def timed_input(prompt, timeout):
-    sys.stdout.write(prompt)
-    sys.stdout.flush()
-    ready, _, _ = select.select([sys.stdin], [], [], timeout)
-    if ready:
-        return sys.stdin.readline().rstrip('\n')
-    return None
+def blocking_input(prompt):
+    """Write prompt with ANSI positioning, then block until user presses Enter."""
+    with _write_lock:
+        sys.stdout.write(prompt)
+        sys.stdout.flush()
+    return sys.stdin.readline().rstrip('\n')
 
 
 # ─── Scenario selection (Rich for the one-time screen) ─────────────
@@ -447,7 +460,7 @@ def reset_session():
 # ─── Main ─────────────────────────────────────────────────────────
 
 def main():
-    global last_activity, start_time
+    global start_time
 
     os.system('cls' if os.name == 'nt' else 'clear')
     banner = Text()
@@ -464,7 +477,6 @@ def main():
     while True:
         scenario = choose_scenario()
         reset_session()
-        last_activity = time.time()
 
         sock, patient_name = connect_to_server(scenario)
 
@@ -474,48 +486,25 @@ def main():
         animator.start()
 
         last_query = None
-        empty_input_count = 0
-        EMPTY_INPUT_THRESHOLD = 3
         last_prompt_time = 0
         PROMPT_COOLDOWN = 7
         should_restart = False
 
-        # Move cursor to input row (no \n to avoid scrolling the screen)
+        # Prompt positions at the last terminal row
         th = os.get_terminal_size().lines
         input_row = th
         prompt_str = f"\033[{input_row};1H\033[2K  {BGRN}Doctor > {RST}"
 
         while True:
             try:
-                elapsed_idle = time.time() - last_activity
-                remaining = max(1, IDLE_TIMEOUT - elapsed_idle)
-
-                query = timed_input(prompt_str, timeout=remaining)
-
-                if query is None:
-                    animator.stop()
-                    sys.stdout.write(f"\n  {DIM}{YEL}Session timed out. Returning to patient selection...{RST}\n")
-                    sys.stdout.flush()
-                    time.sleep(2)
-                    should_restart = True
-                    break
-
+                query = blocking_input(prompt_str)
                 query = query.strip()
-                last_activity = time.time()
 
                 if len(query.encode('utf-8')) > MAX_PROMPT_LENGTH:
-                    sys.stdout.write(f"  {BRED}Prompt too long! Max {MAX_PROMPT_LENGTH} bytes.{RST}\n")
-                    sys.stdout.flush()
                     continue
 
                 if query == '':
-                    empty_input_count += 1
-                    if empty_input_count >= EMPTY_INPUT_THRESHOLD:
-                        sys.stdout.write(f"  {DIM}{YEL}Please type a question for the patient.{RST}\n")
-                        sys.stdout.flush()
                     continue
-                else:
-                    empty_input_count = 0
 
                 if query.lower() == 'exit':
                     animator.stop()
@@ -537,10 +526,8 @@ def main():
                         if tag_type == "text":
                             response_text += content
                     conversation_log.append(("system", response_text.strip()))
-                    # Pause animator, redraw, resume
                     animator.stop()
                     redraw_screen(patient_name)
-                    animator = VitalsAnimator(patient_name, VITALS_START_ROW)
                     animator.start()
                     continue
 
@@ -548,23 +535,21 @@ def main():
                 current_time = time.time()
                 if current_time - last_prompt_time < PROMPT_COOLDOWN:
                     wait_time = PROMPT_COOLDOWN - (current_time - last_prompt_time)
-                    sys.stdout.write(f"  {DIM}{YEL}Please wait {wait_time:.1f}s before your next question.{RST}\n")
-                    sys.stdout.flush()
+                    with _write_lock:
+                        sys.stdout.write(f"\033[{input_row - 1};1H\033[2K  {DIM}{YEL}Please wait {wait_time:.0f}s...{RST}")
+                        sys.stdout.flush()
                     continue
                 last_prompt_time = current_time
 
-                # Regular question
+                # Regular question — animator keeps running (lock protects stdout)
                 last_query = query
                 conversation_log.append(("doctor", query))
 
-                # Stop animator during streaming to prevent cursor conflicts
-                animator.stop()
-                time.sleep(0.05)
-
                 # Show streaming response below the monitor
                 resp_row = STATIC_START_ROW
-                sys.stdout.write(f"\033[{resp_row};1H\033[2K  {BCYN}{patient_name}:{RST} ")
-                sys.stdout.flush()
+                with _write_lock:
+                    sys.stdout.write(f"\033[{resp_row};1H\033[2K  {BCYN}{patient_name}:{RST} ")
+                    sys.stdout.flush()
 
                 while True:
                     try:
@@ -572,8 +557,9 @@ def main():
                         response_text = ""
                         for tag_type, content in stream_response(sock):
                             if tag_type == "text":
-                                sys.stdout.write(content)
-                                sys.stdout.flush()
+                                with _write_lock:
+                                    sys.stdout.write(content)
+                                    sys.stdout.flush()
                                 response_text += content
 
                         if response_text.strip():
@@ -581,15 +567,15 @@ def main():
 
                         break
                     except (TimeoutError, ConnectionError) as e:
-                        sys.stdout.write(f"\033[{resp_row + 1};1H\033[2K  {BRED}Lost connection: {e}. Reconnecting...{RST}")
-                        sys.stdout.flush()
+                        with _write_lock:
+                            sys.stdout.write(f"\033[{resp_row + 1};1H\033[2K  {BRED}Reconnecting...{RST}")
+                            sys.stdout.flush()
                         sock.close()
                         sock, patient_name = reconnect_and_resend(scenario, last_query)
 
-                # After Q&A, redraw everything and restart animator
-                last_activity = time.time()
+                # After Q&A, redraw conversation area (animator keeps running)
+                animator.stop()
                 redraw_screen(patient_name)
-                animator = VitalsAnimator(patient_name, VITALS_START_ROW)
                 animator.start()
 
             except KeyboardInterrupt:
